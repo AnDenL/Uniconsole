@@ -7,21 +7,8 @@ namespace DevConsole
 {
     public class CoreConsolePlugin : IConsolePlugin
     {
-        public static float TimeScale = 1;
-        public static ConVarFloat cvTimeScale;
-
         public void RegisterCommands()
         {
-            cvTimeScale = new ConVarFloat("time_scale", 1f, "Global game time scale",
-                getter: () => TimeScale * (MainMenu.instance.isPaused ? 0 : 1),
-                setter: (val) => {
-                    if (val < 0) throw new Exception("Time scale cannot be negative.");
-                    TimeScale = val;
-                    if (!MainMenu.instance.isPaused) Time.timeScale = TimeScale;
-                },
-                onChange: (val) => DebugConsole.Log($"Time scale set to {val}")
-            );
-
             CommandRegistry.Register("print", "/print <message>", (args, pool) =>
             {
                 if (args.Length == 0) return;

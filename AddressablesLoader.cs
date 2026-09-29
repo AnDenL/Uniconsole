@@ -1,59 +1,122 @@
-using UnityEngine.AddressableAssets;
-using UnityEngine;
-using UnityEngine.ResourceManagement.AsyncOperations;
-using System.Collections.Generic;
-using UnityEngine.AddressableAssets.ResourceLocators;
 using System;
-using Object = UnityEngine.Object;
+using System.Collections.Generic;
+using System.IO;
+using UnityEngine;
+using UnityEngine.AddressableAssets;
+using UnityEngine.AddressableAssets.ResourceLocators;
+using UnityEngine.ResourceManagement.AsyncOperations;
 using UnityEngine.SceneManagement;
+using Object = UnityEngine.Object;
 
-namespace DevConsole 
+namespace DevConsole
 {
     public static class AddressablesLoader
     {
         public const string BasePath = "Assets/Game/";
-        
-        private static readonly Dictionary<string, AsyncOperationHandle> CachedHandles = new();
-        private static readonly Dictionary<Type, string> TypeFolders = new()
-        {
-            { typeof(GameObject), "Prefabs/" },
-            { typeof(UpgradeData), "Upgrades/" },
-            { typeof(AudioClip), "Audio/" }
-        };
 
+        public readonly struct TypeRule
+        {
+            public readonly string SubFolder;
+            public readonly string Extension;
+
+            public TypeRule(string subFolder, string extension)
+            {
+                SubFolder = subFolder;
+                Extension = extension.StartsWith(".") ? extension : $".{extension}";
+            }
+        }
+
+        private static readonly Dictionary<string, AsyncOperationHandle> CachedHandles = new();
+        private static readonly Dictionary<Type, TypeRule> TypeRules = new();
         private static readonly Dictionary<Type, List<string>> TypeCache = new();
+        private static bool isInitialized;
+
+        static AddressablesLoader()
+        {
+            RegisterType<GameObject>("Prefabs/", ".prefab");
+            RegisterType<AudioClip>("Audio/", ".ogg");
+        }
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void AutoInit()
         {
             var initHandle = Addressables.InitializeAsync();
-            initHandle.Completed += op =>
+            initHandle.Completed += _ =>
             {
+                isInitialized = true;
                 RefreshKeys();
             };
-
-            SceneManager.activeSceneChanged += (s1, s2) => ClearCache();
+            SceneManager.activeSceneChanged += (_, _) => ClearCache();
         }
 
-        public static void ClearCache()
+        public static void RegisterType<T>(string subFolder, string extension = ".asset") where T : Object
         {
-            foreach (var handle in CachedHandles.Values)
+            RegisterType(typeof(T), subFolder, extension);
+        }
+
+        public static void RegisterType(Type type, string subFolder, string extension = ".asset")
+        {
+            TypeRules[type] = new TypeRule(subFolder, extension);
+
+            if (!TypeCache.ContainsKey(type))
+                TypeCache[type] = new List<string>();
+
+            if (isInitialized)
             {
-                if (handle.IsValid()) Addressables.Release(handle);
+                RefreshKeysForType(type);
             }
-            CachedHandles.Clear();
         }
 
         public static string FormatPath<T>(string assetName)
         {
             if (assetName.StartsWith("Assets/")) return assetName;
 
-            string subFolder = TypeFolders.TryGetValue(typeof(T), out var folder) ? folder : "";
-            
-            string extension = typeof(T) == typeof(GameObject) ? ".prefab" : 
-                            typeof(T) == typeof(AudioClip) ? ".ogg" : ".asset"; 
+            if (TypeRules.TryGetValue(typeof(T), out var rule))
+            {
+                return $"{BasePath}{rule.SubFolder}{assetName}{rule.Extension}";
+            }
 
-            return $"{BasePath}{subFolder}{assetName}{extension}";
+            return $"{BasePath}{assetName}.asset";
+        }
+
+        public static void RefreshKeys()
+        {
+            foreach (var type in TypeRules.Keys)
+            {
+                RefreshKeysForType(type);
+            }
+        }
+
+        private static void RefreshKeysForType(Type type)
+        {
+            if (!TypeRules.TryGetValue(type, out var rule)) return;
+
+            if (!TypeCache.TryGetValue(type, out var list))
+            {
+                list = new List<string>();
+                TypeCache[type] = list;
+            }
+            list.Clear();
+
+            string prefix = $"{BasePath}{rule.SubFolder}";
+
+            foreach (IResourceLocator locator in Addressables.ResourceLocators)
+            {
+                foreach (object keyObj in locator.Keys)
+                {
+                    if (keyObj is string key && !IsInternalGuid(key))
+                    {
+                        if (key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                        {
+                            string shortName = Path.GetFileNameWithoutExtension(key);
+                            if (!list.Contains(shortName))
+                            {
+                                list.Add(shortName);
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         public static bool Exists(string key)
@@ -83,7 +146,7 @@ namespace DevConsole
             }
 
             var handle = Addressables.LoadAssetAsync<T>(fullPath);
-            CachedHandles[fullPath] = handle; 
+            CachedHandles[fullPath] = handle;
 
             handle.Completed += op =>
             {
@@ -101,60 +164,28 @@ namespace DevConsole
             };
         }
 
-        public static void RefreshKeys()
+        public static void ClearCache()
         {
-            TypeCache.Clear();
-
-            var prefixes = new Dictionary<Type, string>();
-            foreach (var type in TypeFolders.Keys)
+            foreach (var handle in CachedHandles.Values)
             {
-                TypeCache[type] = new List<string>();
-                prefixes[type] = $"{BasePath}{TypeFolders[type]}";
+                if (handle.IsValid()) Addressables.Release(handle);
             }
-
-            foreach (IResourceLocator locator in Addressables.ResourceLocators)
-            {
-                foreach (object keyObj in locator.Keys)
-                {
-                    if (keyObj is string key && !IsInternalGuid(key))
-                    {
-                        foreach (var kvp in prefixes)
-                        {
-                            if (key.StartsWith(kvp.Value, StringComparison.OrdinalIgnoreCase))
-                            {
-                                string shortName = System.IO.Path.GetFileNameWithoutExtension(key);
-                                
-                                if (!TypeCache[kvp.Key].Contains(shortName))
-                                {
-                                    TypeCache[kvp.Key].Add(shortName);
-                                }
-                                
-                                break; 
-                            }
-                        }
-                    }
-                }
-            }
+            CachedHandles.Clear();
         }
-
-        private static bool IsInternalGuid(string key) => key.Length == 32 && Guid.TryParse(key, out _);
 
         public static List<string> GetSuggestionsForType<T>(string query) where T : Object
         {
             var results = new List<string>();
-            
-            if (!TypeCache.TryGetValue(typeof(T), out var cachedNames))
-                return results;
+            if (!TypeCache.TryGetValue(typeof(T), out var cachedNames)) return results;
 
             foreach (string shortName in cachedNames)
             {
                 if (string.IsNullOrEmpty(query) || shortName.Contains(query, StringComparison.OrdinalIgnoreCase))
-                {
                     results.Add(shortName);
-                }
             }
-
             return results;
         }
+
+        private static bool IsInternalGuid(string key) => key.Length == 32 && Guid.TryParse(key, out _);
     }
 }

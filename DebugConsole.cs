@@ -22,6 +22,8 @@ namespace DevConsole
         [SerializeField] private TextMeshProUGUI historyText;
         [SerializeField] private TextMeshProUGUI hintsText;
         [SerializeField] private TMP_InputField inputField;
+
+        public static event Action<bool> OnConsoleVisibilityChanged;
         
         private EventSystem eventSystem;
         private GameObject panel;
@@ -38,12 +40,17 @@ namespace DevConsole
         #region Unity Lifecycle
         private void Awake()
         {
+            if (Instance != null)
+            {
+                Destroy(gameObject);
+                return;
+            }
             Instance = this;
+            DontDestroyOnLoad(gameObject);
+
             vm ??= new VM();
             
             CommandRegistry.RegisterPlugin(new CoreConsolePlugin());
-
-            CommandRegistry.RegisterPlugin(new GameConsolePlugin());
         }
 
         private void Start()
@@ -170,6 +177,8 @@ namespace DevConsole
             bool state = !panel.activeInHierarchy;
             panel.SetActive(state);
             MainMenu.instance.CanPause = !state; 
+
+            OnConsoleVisibilityChanged?.Invoke(state);
 
             if (state)
             {
