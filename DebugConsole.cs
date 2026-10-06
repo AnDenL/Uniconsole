@@ -5,6 +5,7 @@ using System.Text;
 using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.UI;
 
 namespace DevConsole
 {
@@ -28,7 +29,9 @@ namespace DevConsole
         private EventSystem eventSystem;
         private GameObject panel;
         private readonly List<string> currentSuggestions = new();
-        private int suggestionIndex = 0;
+        private int suggestionIndex = -1;
+        private const float tabInitialDelay = 0.4f;
+        private const float tabRepeatRate = 0.1f;
 
         private readonly Queue<string> logLines = new();
         public static string LastStackTrace { get; private set; } = "";
@@ -59,6 +62,8 @@ namespace DevConsole
             panel = transform.GetChild(0).gameObject;
             panel.SetActive(false);
             
+            inputField.navigation = new Navigation { mode = Navigation.Mode.None };
+    
             inputField.onSubmit.AddListener(Enter);
             inputField.onValueChanged.AddListener(OnInputChanged);
             
@@ -71,6 +76,8 @@ namespace DevConsole
                 ExecuteScript(File.ReadAllText(autoexecPath));
             }
         }
+
+        private float tabTimer = 0;
 
         private void Update()
         {
@@ -88,11 +95,28 @@ namespace DevConsole
                 return;
             }
 
-            if (Input.GetKeyDown(KeyCode.Tab))
+            if (!inputField.isFocused)
             {
-                ApplyTabAutofill();
+                inputField.ActivateInputField();
             }
-            else if (Input.GetKeyDown(KeyCode.UpArrow))
+
+            if (currentSuggestions.Count > 0)
+            {
+                if (Input.GetKeyDown(KeyCode.Tab))
+                {
+                    CycleTabSuggestion();
+                    tabTimer = Time.unscaledTime + tabInitialDelay;
+                }
+                else if (Input.GetKey(KeyCode.Tab))
+                {
+                    if (Time.unscaledTime >= tabTimer)
+                    {
+                        CycleTabSuggestion();
+                        tabTimer = Time.unscaledTime + tabRepeatRate;
+                    }
+                }
+            }
+            if (Input.GetKeyDown(KeyCode.UpArrow))
             {
                 NavigateHistory(1);
             }
@@ -135,21 +159,34 @@ namespace DevConsole
         #endregion
 
         #region Hints
+        private void CycleTabSuggestion()
+        {
+            int dir = Input.GetKey(KeyCode.LeftShift) ? -1 : 1;
+
+            if (suggestionIndex == -1)
+                suggestionIndex = dir > 0 ? 0 : currentSuggestions.Count - 1;
+            else
+                suggestionIndex = (suggestionIndex + dir + currentSuggestions.Count) % currentSuggestions.Count;
+
+            ApplyTabAutofill();
+        }
+
         private void ApplyTabAutofill()
         {
-            if (currentSuggestions.Count == 0) return;
+            if (currentSuggestions.Count == 0 || suggestionIndex < 0 || suggestionIndex >= currentSuggestions.Count) 
+                return;
 
             string currentText = inputField.text;
             int lastSpace = currentText.LastIndexOf(' ');
+            
             string baseText = lastSpace == -1 ? "/" : currentText[..(lastSpace + 1)];
-            
-            suggestionIndex = Math.Clamp(suggestionIndex, 0, currentSuggestions.Count - 1);
             string chosen = currentSuggestions[suggestionIndex];
-            
-            inputField.text = baseText + chosen + " ";
+
+            inputField.SetTextWithoutNotify(baseText + chosen);
             inputField.caretPosition = inputField.text.Length;
 
-            if (currentSuggestions.Count != 0) suggestionIndex = (suggestionIndex + 1) % currentSuggestions.Count;
+            string prefix = lastSpace == -1 ? "Commands: " : (CommandRegistry.TryGet(currentText[1..].Split(' ')[0], out var info) ? info.Syntax + "\n" : "");
+            RenderHints(prefix);
         }
 
         private void RenderHints(string prefix)
@@ -209,6 +246,7 @@ namespace DevConsole
         {
             if (string.IsNullOrWhiteSpace(input)) return;
 
+            inputField.Select();
             commandHistory.Add(input);
             historyIndex = commandHistory.Count;
 
@@ -231,7 +269,7 @@ namespace DevConsole
         private void OnInputChanged(string text)
         {
             currentSuggestions.Clear();
-            suggestionIndex = 0;
+            suggestionIndex = -1;
 
             if (string.IsNullOrWhiteSpace(text) || text[0] != '/')
             {
@@ -241,7 +279,6 @@ namespace DevConsole
 
             string raw = text[1..];
             int firstSpace = raw.IndexOf(' ');
-            bool endsWithSpace = raw.EndsWith(" ");
 
             if (firstSpace == -1)
             {
@@ -258,37 +295,30 @@ namespace DevConsole
 
             if (CommandRegistry.TryGet(cmdName, out CommandInfo info))
             {
-                int argIndex = 0;
-                int lastSpaceIndex = firstSpace;
+                bool endsWithSpace = raw.EndsWith(" ");
+                string[] parts = raw.Split(' ', StringSplitOptions.RemoveEmptyEntries);
 
-                for (int i = firstSpace; i < raw.Length; i++)
-                {
-                    if (raw[i] == ' ')
-                    {
-                        if (i > 0 && raw[i - 1] != ' ') argIndex++;
-                        lastSpaceIndex = i;
-                    }
-                }
-
-                if (endsWithSpace) argIndex++;
-                else argIndex = Math.Max(0, argIndex - 1);
-
-                string currentArg = endsWithSpace ? string.Empty : raw[(lastSpaceIndex + 1)..];
+                int argIndex = endsWithSpace ? parts.Length - 1 : Math.Max(0, parts.Length - 2);
+                string currentArg = endsWithSpace ? string.Empty : parts[^1];
 
                 if (info.Hints != null)
                 {
                     var options = info.Hints(argIndex, currentArg);
-                    if (options != null) currentSuggestions.AddRange(options);
+                    if (options != null)
+                    {
+                        foreach (var opt in options)
+                        {
+                            if (string.IsNullOrEmpty(currentArg) || opt.StartsWith(currentArg, StringComparison.OrdinalIgnoreCase))
+                                currentSuggestions.Add(opt);
+                        }
+                    }
                 }
 
                 hintsBuilder.Clear();
                 hintsBuilder.AppendLine(info.Syntax);
                 RenderHints(hintsBuilder.ToString());
             }
-            else
-            {
-                hintsText.text = string.Empty;
-            }
+            else hintsText.text = string.Empty;
         }
         #endregion
 

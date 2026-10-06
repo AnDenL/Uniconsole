@@ -45,6 +45,25 @@ namespace DevConsole
                     DebugConsole.Log($"Loading scene {index}...");
                 }
                 else throw new Exception($"Scene {index} not found in Build Settings.");
+            },
+            hintProvider: (argIndex, currentArg) =>
+            {
+                if (argIndex != 0) return null;
+                var scenes = new List<string>();
+                for (int i = 0; i < SceneManager.sceneCountInBuildSettings; i++)
+                {
+                    string path = SceneUtility.GetScenePathByBuildIndex(i);
+                    scenes.Add($"{i}: " + System.IO.Path.GetFileNameWithoutExtension(path));
+                }
+                return scenes;
+            });
+
+            CommandRegistry.Register("restart", "/restart", (args, pool) =>
+            {
+                Time.timeScale = 1f;
+                int active = SceneManager.GetActiveScene().buildIndex;
+                SceneManager.LoadScene(active);
+                DebugConsole.Log($"Restarting scene: {SceneManager.GetActiveScene().name} [{active}]");
             });
 
             CommandRegistry.Register("help", "/help [command_name]", (args, pool) =>
