@@ -10,6 +10,7 @@ namespace DevConsole
         public ValueType Type { get; protected set; }
 
         public abstract void SetVMValue(Value val, List<string> pool);
+        public abstract Value GetVMValue();
         public abstract string AsString();
     }
 
@@ -46,6 +47,8 @@ namespace DevConsole
             else throw new Exception($"Cannot convert '{val.ToString(pool)}' to integer.");
         }
 
+        public override Value GetVMValue() => DevConsole.Value.FromInt(Value);
+
         public override string AsString() => Value.ToString();
     }
 
@@ -80,6 +83,8 @@ namespace DevConsole
             else throw new Exception($"Cannot convert '{val.ToString(pool)}' to float.");
         }
 
+        public override Value GetVMValue() => DevConsole.Value.FromFloat(Value);
+
         public override string AsString() => Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
     }
 
@@ -110,17 +115,11 @@ namespace DevConsole
 
         public override void SetVMValue(Value val, List<string> pool)
         {
-            if (val.Type == ValueType.Bool) Value = val.AsBool;
-            else if (val.TryGetInt(pool, out int res)) Value = res != 0;
-            else if (val.Type == ValueType.String && pool != null)
-            {
-                string s = pool[val.StringIndex].ToLower();
-                if (s == "true") Value = true;
-                else if (s == "false") Value = false;
-                else throw new Exception("Expected 'true', 'false', 1 or 0.");
-            }
-            else throw new Exception("Cannot convert to boolean.");
+            if (val.TryGetBool(pool, out bool res)) Value = res;
+            else throw new Exception($"Cannot convert '{val.ToString(pool)}' to bool.");
         }
+
+        public override Value GetVMValue() => DevConsole.Value.FromBool(Value);
 
         public override string AsString() => Value ? "true" : "false";
     }

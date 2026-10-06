@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Runtime.InteropServices;
 
 namespace DevConsole 
@@ -26,9 +27,12 @@ namespace DevConsole
     public enum OpCode : byte
     {
         PushInt, PushFloat, PushString, PushBool,
+        PushVariable, Negate,
         Add, Subtract, Multiply, Divide,
         CallCommand, Return
     }
+
+    #region Values
 
     public enum ValueType : byte { Null, Int, Float, String, Bool }
 
@@ -51,14 +55,21 @@ namespace DevConsole
             return Type switch
             {
                 ValueType.Int    => AsInt.ToString(),
-                ValueType.Float  => AsFloat.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ValueType.Float  => AsFloat.ToString(CultureInfo.InvariantCulture),
                 ValueType.Bool   => AsBool ? "true" : "false",
                 ValueType.String => pool != null && StringIndex < pool.Count ? pool[StringIndex] : string.Empty,
                 _                => "null"
             };
         }
 
-        public readonly bool TryGetInt(List<string> pool, out int i)
+        /// <summary>
+        /// Tries to get int from variable
+        /// </summary>
+        /// <param name="pool">string parameters</param>
+        /// <param name="i">int result, 0 on fail</param>
+        /// <param name="silent">If true it wouldn't print error to console</param>
+        /// <returns>true on success false on fail</returns>
+        public readonly bool TryGetInt(List<string> pool, out int i, bool silent = false)
         {
             if (Type == ValueType.Int)
             {
@@ -70,21 +81,33 @@ namespace DevConsole
                 i = (int)AsFloat;
                 return true;
             }
+            if (Type == ValueType.Bool)
+            {
+                i = AsBool ? 1 : 0;
+                return true;
+            }
             if (Type == ValueType.String && pool != null)
             {
-                if (int.TryParse(pool[StringIndex], out i)) 
+                if (int.TryParse(pool[StringIndex], NumberStyles.Integer, CultureInfo.InvariantCulture, out i)) 
                 {
                     return true;
                 }
                 
-                DebugConsole.LogError($"Can't parse '{pool[StringIndex]}' to integer.");
+                if (!silent) DebugConsole.LogError($"Can't parse '{pool[StringIndex]}' to integer.");
             }
 
             i = 0;
             return false;
         }
 
-        public readonly bool TryGetFloat(List<string> pool, out float v)
+        /// <summary>
+        /// Tries to get float from variable
+        /// </summary>
+        /// <param name="pool">string parameters</param>
+        /// <param name="v">float result, 0 on fail</param>
+        /// <param name="silent">If true it wouldn't print error to console</param>
+        /// <returns>true on success false on fail</returns>
+        public readonly bool TryGetFloat(List<string> pool, out float v, bool silent = false)
         {
             if (Type == ValueType.Int)
             {
@@ -96,20 +119,64 @@ namespace DevConsole
                 v = AsFloat;
                 return true;
             }
+            if (Type == ValueType.Bool)
+            {
+                v = AsBool ? 1 : 0;
+                return true;
+            }
             if (Type == ValueType.String && pool != null)
             {
-                if (float.TryParse(pool[StringIndex], out v)) 
+                if (float.TryParse(pool[StringIndex], NumberStyles.Float, CultureInfo.InvariantCulture, out v)) 
                 {
                     return true;
                 }
                 
-                DebugConsole.LogError($"Can't parse '{pool[StringIndex]}' to float.");
+                if (!silent) DebugConsole.LogError($"Can't parse '{pool[StringIndex]}' to float.");
             }
 
             v = 0;
             return false;
         }
+
+        /// <summary>
+        /// Tries to get bool from variable
+        /// </summary>
+        /// <param name="pool">string parameters</param>
+        /// <param name="v">bool result, false on fail</param>
+        /// <param name="silent">If true it wouldn't print error to console</param>
+        /// <returns>true on success false on fail</returns>
+        public readonly bool TryGetBool(List<string> pool, out bool v, bool silent = false)
+        {
+            if (Type == ValueType.Int)
+            {
+                v = AsInt != 0;
+                return true;
+            }
+            if (Type == ValueType.Float)
+            {
+                v = AsFloat != 0;
+                return true;
+            }
+            if (Type == ValueType.Bool)
+            {
+                v = AsBool;
+                return true;
+            }
+            if (Type == ValueType.String && pool != null)
+            {
+                if (bool.TryParse(pool[StringIndex], out v)) 
+                {
+                    return true;
+                }
+                
+                if (!silent) DebugConsole.LogError($"Can't parse '{pool[StringIndex]}' to boolean.");
+            }
+
+            v = false;
+            return false;
+        }
     }
+    #endregion
 
     public struct CompiledScript
     {
@@ -118,7 +185,7 @@ namespace DevConsole
         public string Source;
     }
 
-        public class VM
+    public class VM
     {
         private readonly Value[] stack = new Value[64];
         private int stackPtr = 0;
@@ -130,8 +197,8 @@ namespace DevConsole
         private int pos;
 
         public bool HasError { get; private set; } 
-
-        public List<Token> Lex(string code)
+        #region Lexer
+         public List<Token> Lex(string code)
         {
             var tokens = new List<Token>();
             int i = 0;
@@ -222,17 +289,21 @@ namespace DevConsole
             tokens.Add(new Token(EndOfFile, string.Empty));
             return tokens;
         }
+        #endregion
 
+        #region Compiler
         public void Compile(List<Token> inputTokens)
         {
             tokens = inputTokens;
             pos = 0;
             code.Clear();
+            strings.Clear();
+            stringLookup.Clear();
             HasError = false; 
 
             while (!IsAtEnd())
             {
-                if (Check(TokenType.Newline)) { Advance(); continue; }
+                if (Check( Newline)) { Advance(); continue; }
                 
                 CompileStatement();
                 
@@ -258,11 +329,11 @@ namespace DevConsole
 
         private void CompileStatement()
         {
-            if (Check(TokenType.Identifier))
+            if (Check( Identifier))
             {
                 string cmdName = Advance().Value;
                 byte argCount = 0;
-                while (!IsAtEnd() && !Check(TokenType.Newline))
+                while (!IsAtEnd() && !Check( Newline))
                 {
                     CompileExpression();
                     argCount++;
@@ -281,22 +352,22 @@ namespace DevConsole
         private void CompileExpression()
         {
             CompileTerm();
-            while (Match(TokenType.Plus, TokenType.Minus))
+            while (Match( Plus,  Minus))
             {
                 TokenType op = Previous().Type;
                 CompileTerm();
-                code.Add((byte)(op == TokenType.Plus ? OpCode.Add : OpCode.Subtract));
+                code.Add((byte)(op == Plus ? OpCode.Add : OpCode.Subtract));
             }
         }
 
         private void CompileTerm()
         {
             CompileFactor();
-            while (Match(TokenType.Multiply, TokenType.Divide))
+            while (Match(Multiply, Divide))
             {
                 TokenType op = Previous().Type;
                 CompileFactor();
-                code.Add((byte)(op == TokenType.Multiply ? OpCode.Multiply : OpCode.Divide));
+                code.Add((byte)(op == Multiply ? Multiply : Divide));
             }
         }
 
@@ -304,17 +375,17 @@ namespace DevConsole
         {
             bool isNegative = false;
             
-            if (Match(TokenType.Minus))
+            if (Match(Minus))
             {
                 isNegative = true;
             }
 
-            if (Match(TokenType.Number))
+            if (Match(Number))
             {
                 string val = Previous().Value;
                 if (val.Contains('.')) 
                 {
-                    float f = float.Parse(val, System.Globalization.CultureInfo.InvariantCulture);
+                    float f = float.Parse(val, CultureInfo.InvariantCulture);
                     WriteFloat(isNegative ? -f : f); 
                 }
                 else 
@@ -323,33 +394,33 @@ namespace DevConsole
                     WriteInt(isNegative ? -i : i);
                 }
             }
-            else if (Match(TokenType.StrLiteral))
+            else if (Match(Identifier))              
             {
-                if (isNegative) { DebugConsole.LogError("Cannot negate a string."); HasError = true; }
-                code.Add((byte)OpCode.PushString);
+                code.Add((byte)OpCode.PushVariable);
                 WriteStringId(Previous().Value);
+                if (isNegative) code.Add((byte)OpCode.Negate);
             }
-            else if (Match(TokenType.Identifier)) 
+            else if (Match(LParen))
             {
-                if (isNegative) { DebugConsole.LogError("Cannot negate an identifier."); HasError = true; }
-                code.Add((byte)OpCode.PushString);
-                WriteStringId(Previous().Value);
+                CompileExpression();
+                Consume(RParen, "Expected ')' after expression.");
+                if (isNegative) code.Add((byte)OpCode.Negate);
             }
-            else if (Match(TokenType.True)) 
+            else if (Match(True)) 
             { 
-                if (isNegative) { DebugConsole.LogError("Cannot negate a boolean."); HasError = true; }
-                code.Add((byte)OpCode.PushBool); code.Add(1); 
+                code.Add((byte)OpCode.PushBool);
+                code.Add((byte)(isNegative ? 0 : 1));
             }
-            else if (Match(TokenType.False)) 
+            else if (Match(False)) 
             { 
-                if (isNegative) { DebugConsole.LogError("Cannot negate a boolean."); HasError = true; }
-                code.Add((byte)OpCode.PushBool); code.Add(0); 
+                code.Add((byte)OpCode.PushBool);
+                code.Add((byte)(isNegative ? 1 : 0));
             }
-            else if (Match(TokenType.LParen))
+            else if (Match(LParen))
             {
                 if (isNegative) { DebugConsole.LogError("Unary minus before parenthesis is not supported."); HasError = true; }
                 CompileExpression();
-                Consume(TokenType.RParen, "Expected ')' after expression.");
+                Consume( RParen, "Expected ')' after expression.");
             }
             else
             {
@@ -359,9 +430,9 @@ namespace DevConsole
             }
         }
 
-        private bool IsAtEnd() => pos >= tokens.Count || tokens[pos].Type == TokenType.EndOfFile;
-        private Token Peek() => pos < tokens.Count ? tokens[pos] : new Token(TokenType.EndOfFile, string.Empty);
-        private Token Previous() => pos > 0 && pos - 1 < tokens.Count ? tokens[pos - 1] : new Token(TokenType.Unknown, string.Empty);
+        private bool IsAtEnd() => pos >= tokens.Count || tokens[pos].Type ==  EndOfFile;
+        private Token Peek() => pos < tokens.Count ? tokens[pos] : new Token( EndOfFile, string.Empty);
+        private Token Previous() => pos > 0 && pos - 1 < tokens.Count ? tokens[pos - 1] : new Token( Unknown, string.Empty);
         private Token Advance() { if (!IsAtEnd()) pos++; return Previous(); }
         private bool Check(TokenType type) => !IsAtEnd() && Peek().Type == type;
         
@@ -414,8 +485,10 @@ namespace DevConsole
             code.Add((byte)(index & 0xFF));
             code.Add((byte)((index >> 8) & 0xFF));
         }
+        #endregion
 
-        public unsafe void Execute()
+        #region Runtime
+        public void Execute()
         {
             if (HasError || code.Count == 0) return; 
             Execute(code.ToArray(), new List<string>(strings));
@@ -459,6 +532,22 @@ namespace DevConsole
                             bool bVal = bytecode[ip++] != 0;
                             stack[stackPtr++] = Value.FromBool(bVal);
                             break;
+                        
+                        case OpCode.PushVariable:
+                            if (stackPtr >= stack.Length) throw new Exception("Stack overflow.");
+                            ushort vIdx = (ushort)(bytecode[ip] | (bytecode[ip + 1] << 8));
+                            ip += 2;
+                            string varName = scriptStrings[vIdx];
+
+                            if (CommandRegistry.TryGetConVar(varName, out ConVar cv))
+                            {
+                                stack[stackPtr++] = cv.GetVMValue();
+                            }
+                            else
+                            {
+                                stack[stackPtr++] = Value.FromString(vIdx);
+                            }
+                            break;
 
                         case OpCode.Add:
                         case OpCode.Subtract:
@@ -487,6 +576,25 @@ namespace DevConsole
                                     OpCode.Multiply => aOp.AsInt * bOp.AsInt, _ => aOp.AsInt / bOp.AsInt
                                 };
                                 stack[stackPtr++] = Value.FromInt(res);
+                            }
+                            break;
+                        case OpCode.Negate:
+                            if (stackPtr < 1) throw new Exception("Stack underflow on negate.");
+                            ref Value top = ref stack[stackPtr - 1];
+                            
+                            switch (top.Type)
+                            {
+                                case ValueType.Int:
+                                    top.AsInt = -top.AsInt;
+                                    break;
+                                case ValueType.Float:
+                                    top.AsFloat = -top.AsFloat;
+                                    break;
+                                case ValueType.Bool:
+                                    top.AsBool = !top.AsBool;
+                                    break;
+                                default:
+                                    throw new Exception($"Cannot negate value of type '{top.Type}'.");
                             }
                             break;
 
@@ -519,4 +627,5 @@ namespace DevConsole
             }
         }
     }
+    #endregion
 }

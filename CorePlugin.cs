@@ -9,6 +9,15 @@ namespace DevConsole
     {
         public void RegisterCommands()
         {
+            new ConVarBool("fullscreen", Screen.fullScreen, "true/false", 
+                () => Screen.fullScreen, 
+                (value) => Screen.fullScreen = value
+            );
+            new ConVarBool("runInBackground", Application.runInBackground, "true/false", 
+                () => Application.runInBackground, 
+                (value) => Application.runInBackground = value
+            );
+
             CommandRegistry.Register("print", "/print <message>", (args, pool) =>
             {
                 if (args.Length == 0) return;

@@ -74,7 +74,7 @@ namespace DevConsole
 
         private void Update()
         {
-            if (Input.GetKeyDown(KeyCode.F1)) ToggleConsole();
+            if (Input.GetKeyDown(KeyCode.F1) || Input.GetKeyDown(KeyCode.BackQuote)) ToggleConsole();
             
             if (!panel.activeInHierarchy)
             {
