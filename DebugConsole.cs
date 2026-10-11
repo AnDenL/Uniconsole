@@ -49,7 +49,6 @@ namespace DevConsole
                 return;
             }
             Instance = this;
-            DontDestroyOnLoad(gameObject);
 
             vm ??= new VM();
             
